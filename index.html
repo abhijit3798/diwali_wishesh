@@ -339,11 +339,35 @@ requestAnimationFrame(loop);
 
 /* ================= Audio (generated, no files) ================= */
 var AC=null,master=null,wet=null,muted=false,musicTimer=null;
+var unlockEl=null;
+function silentWav(){ // tiny silent WAV, played through an <audio> tag so iPhone uses the media channel
+  var n=4410,b=new ArrayBuffer(44+n*2),v=new DataView(b);
+  function w(o,str){for(var i=0;i<str.length;i++)v.setUint8(o+i,str.charCodeAt(i));}
+  w(0,'RIFF');v.setUint32(4,36+n*2,true);w(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,44100,true);v.setUint32(28,88200,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
+  return URL.createObjectURL(new Blob([b],{type:'audio/wav'}));
+}
+function unlockAudio(){
+  try{if(navigator.audioSession)navigator.audioSession.type='playback';}catch(e){}
+  try{
+    if(!unlockEl){unlockEl=new Audio(silentWav());unlockEl.loop=true;unlockEl.setAttribute('playsinline','');}
+    var pr=unlockEl.play();if(pr&&pr.catch)pr.catch(function(){});
+  }catch(e){}
+  initAudio();
+  if(AC){
+    try{if(AC.state!=='running'){var r=AC.resume();if(r&&r.catch)r.catch(function(){});}}catch(e){}
+    try{var sb=AC.createBuffer(1,1,22050),src=AC.createBufferSource();src.buffer=sb;src.connect(AC.destination);src.start(0);}catch(e){}
+  }
+}
+['touchend','pointerup','click','keydown'].forEach(function(ev){document.addEventListener(ev,unlockAudio,true);});
 function initAudio(){
   if(AC)return;
   try{
     AC=new (window.AudioContext||window.webkitAudioContext)();
-    master=AC.createGain();master.gain.value=.7;master.connect(AC.destination);
+    var comp=AC.createDynamicsCompressor();comp.threshold.value=-18;comp.knee.value=10;comp.ratio.value=4;
+    comp.attack.value=.003;comp.release.value=.25;
+    var post=AC.createGain();post.gain.value=1.6;
+    master=AC.createGain();master.gain.value=1;master.connect(comp);comp.connect(post);post.connect(AC.destination);
     var conv=AC.createConvolver(),len=AC.sampleRate*2.6,buf=AC.createBuffer(2,len,AC.sampleRate);
     for(var c=0;c<2;c++){var d=buf.getChannelData(c);for(var i=0;i<len;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/len,3);}
     conv.buffer=buf;wet=AC.createGain();wet.gain.value=.35;conv.connect(wet);wet.connect(master);
@@ -367,16 +391,16 @@ function startMusic(){
   function schedule(){
     if(!AC)return;
     var r=Math.random(),t=AC.currentTime+.05;
-    if(r<.45)farBoom(t,rnd(.15,.35));
+    if(r<.45)farBoom(t,rnd(.3,.55));
     else if(r<.8)ladi(t,Math.round(rnd(8,22)));
-    else{farBoom(t,rnd(.2,.4));ladi(t+.25,Math.round(rnd(5,10)));}
+    else{farBoom(t,rnd(.35,.6));ladi(t+.25,Math.round(rnd(5,10)));}
     musicTimer=setTimeout(schedule,rnd(900,2600));
   }
   musicTimer=setTimeout(schedule,300);
 }
 function farBoom(t,v){
   var s=noise(1.5),lp=AC.createBiquadFilter(),g=AC.createGain();
-  lp.type='lowpass';lp.frequency.setValueAtTime(rnd(350,600),t);lp.frequency.exponentialRampToValueAtTime(50,t+1.2);
+  lp.type='lowpass';lp.frequency.setValueAtTime(rnd(1000,1600),t);lp.frequency.exponentialRampToValueAtTime(80,t+1);
   g.gain.setValueAtTime(v,t);g.gain.exponentialRampToValueAtTime(.001,t+1.3);
   s.connect(lp);lp.connect(g);out(g);s.start(t);
 }
@@ -387,7 +411,7 @@ function pop(t,v){
   s.connect(bp);bp.connect(g);out(g);s.start(t);
 }
 function ladi(t,n){ // string of small crackers
-  var tt=t,v=rnd(.08,.18);
+  var tt=t,v=rnd(.18,.32);
   for(var i=0;i<n;i++){pop(tt,v*rnd(.6,1.2));tt+=rnd(.04,.11);}
 }
 function bell(t){
@@ -400,13 +424,18 @@ function bell(t){
 function noise(dur){var b=AC.createBuffer(1,AC.sampleRate*dur,AC.sampleRate),d=b.getChannelData(0);for(var i=0;i<d.length;i++)d[i]=Math.random()*2-1;var s=AC.createBufferSource();s.buffer=b;return s;}
 function boom(big){
   if(!AC)return;var t=AC.currentTime,s=noise(2),lp=AC.createBiquadFilter(),g=AC.createGain();
-  lp.type='lowpass';lp.frequency.setValueAtTime(big?900:700,t);lp.frequency.exponentialRampToValueAtTime(60,t+1.4);
-  g.gain.setValueAtTime(big?1:.55,t);g.gain.exponentialRampToValueAtTime(.001,t+1.8);
+  lp.type='lowpass';lp.frequency.setValueAtTime(big?3000:2200,t);lp.frequency.exponentialRampToValueAtTime(90,t+1.2);
+  g.gain.setValueAtTime(big?1:.7,t);g.gain.exponentialRampToValueAtTime(.001,t+1.6);
   s.connect(lp);lp.connect(g);out(g);s.start(t);
+  // sharp "crack" so the bang is audible on small phone speakers
+  var k=noise(.2),kb=AC.createBiquadFilter(),kg=AC.createGain();
+  kb.type='bandpass';kb.frequency.value=1400;kb.Q.value=.7;
+  kg.gain.setValueAtTime(big?1.2:.8,t);kg.gain.exponentialRampToValueAtTime(.001,t+.16);
+  k.connect(kb);kb.connect(kg);out(kg);k.start(t);
   // crackle
   for(var i=0;i<(big?26:12);i++){
     var ct=t+.35+Math.random()*1.2,c=noise(.03),hp=AC.createBiquadFilter(),cg=AC.createGain();
-    hp.type='highpass';hp.frequency.value=2500;cg.gain.setValueAtTime(.12*Math.random()+.04,ct);cg.gain.exponentialRampToValueAtTime(.001,ct+.03);
+    hp.type='highpass';hp.frequency.value=2000;cg.gain.setValueAtTime(.25*Math.random()+.1,ct);cg.gain.exponentialRampToValueAtTime(.001,ct+.03);
     c.connect(hp);hp.connect(cg);out(cg);c.start(ct);
   }
 }
@@ -418,7 +447,7 @@ function whoosh(){
 }
 $('mute').addEventListener('click',function(e){
   e.stopPropagation();if(!AC)return;muted=!muted;
-  master.gain.setTargetAtTime(muted?0:.7,AC.currentTime,.05);this.textContent=muted?'🔇':'🔊';
+  master.gain.setTargetAtTime(muted?0:1,AC.currentTime,.05);this.textContent=muted?'🔇':'🔊';
 });
 document.addEventListener('visibilitychange',function(){if(!AC)return;try{document.hidden?AC.suspend():AC.resume();}catch(e){}});
 function buzz(p){try{if(navigator.vibrate)navigator.vibrate(p);}catch(e){}}
